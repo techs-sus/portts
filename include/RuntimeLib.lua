@@ -2,21 +2,29 @@
 local HttpService = game:GetService("HttpService")
 
 -- @inject
-local url = "https://77d88618-ddca-4997-99fc-c06b26209d17.loca.lt"
+local url = "https://ee7a302d-cfe3-477e-a536-a716be5f348d.loca.lt"
 -- @end_inject
 
-local queue = {}
 local TS = {}
-local Promise = loadstring(HttpService:GetAsync("promise"))() -- eryn's promise library
+local Promise = loadstring(
+	HttpService:GetAsync("https://raw.githubusercontent.com/evaera/roblox-lua-promise/master/lib/init.lua")
+)() -- eryn's promise library
+local binder = loadstring(
+	HttpService:GetAsync("https://raw.githubusercontent.com/techs-sus/void-utils/main/src/server/binder.lua")
+)()
 local ts_caller = 0
+local ts_path
 
-local function load(file: string)
+local function load(file: string, _ts_path)
 	local code = HttpService:GetAsync(string.format("%s/%s", url, file))
 	local loaded = loadstring(code)
 	ts_caller += 1
+	ts_path = _ts_path
 	setfenv(
 		loaded,
-		setmetatable({ ts_caller = ts_caller }, {
+		setmetatable({ _G = {
+			[script] = TS,
+		}, ts_caller = ts_caller, ts_path = file }, {
 			__index = getfenv(0),
 		})
 	)
@@ -27,47 +35,92 @@ end
 TS.Promise = Promise
 
 -- Implement TS::getModule and TS::import
-function TS.getModule(caller: Script, ...)
+function TS.getModule(caller: Script, ...): TSModule
 	local args = { ... }
 	local path = table.concat(args, "/")
-	local loaded = load(path)
-	return {
-		path = path,
+	local pkg_json = HttpService:JSONDecode(
+		HttpService:GetAsync(string.format("%s/node_modules/%s/package.json", url, path))
+	)
+	local _fix = string.split(pkg_json.main, "/")
+	_fix[#_fix] = nil
+	local loaded = load(
+		string.format("node_modules/%s/%s", path, pkg_json.main),
+		string.format("node_modules/%s/%s", path, table.concat(_fix, "/"))
+	)
+	local returned = {
+		pkg_json = pkg_json,
+		path = "node_modules/" .. path,
 		loaded = loaded,
 	}
+	print("ts::getModule", path)
+	local split = string.split(pkg_json.main, "/")
+	if string.find(pkg_json.main, "/") ~= nil then
+		local _ptr = {}
+		local ptr = _ptr
+		-- funny way to make a tree
+		for i = 1, #split do
+			local v = string.match(split[i], "%a+")
+			ptr[v] = {}
+			if i == #split then
+				ptr[v] = returned
+				break
+			else
+				ptr = ptr[v]
+			end
+		end
+
+		return _ptr
+	else
+		return returned
+	end
 end
 
 type TSModule = {
 	path: string,
+	pkg_json: any,
 	loaded: (...any) -> (...any),
 }
 
+local function validateFilePath(path: string)
+	local h = HttpService:RequestAsync({
+		Url = url .. "/validate_fs",
+		Method = "POST",
+		Body = HttpService:JSONEncode({ path = path }),
+		Headers = {
+			["Content-Type"] = "application/json",
+		},
+	})
+	return h.Body == "1"
+end
+
 function TS.import(_, module: Script | TSModule, moduleName: string)
-	if module == script then
-		return load("out/" .. moduleName)()
+	local calling_env = getfenv(1)
+	print("ts::import", moduleName or (module and module.path))
+
+	if calling_env.ts_caller then
+		print(calling_env.ts_caller)
 	end
-	if not moduleName and typeof(module) == "table" and module.path ~= nil then
-		-- its a TSModule
-		local constructed = {}
-		local ptr = constructed
-		local pkg_json = HttpService:JSONDecode(HttpService:GetAsync(url .. module.path .. "/package.json"))
-		local main: string = pkg_json.main
-		local value = module.loaded()
-		if string.find(main, "/") == nil then
-			return value
-		else
-			local split = string.split(main, "/")
-			for i = 1, #split do
-				local v = string.match(split[i], "%a+")
-				ptr[v] = {}
-				if i == #split then
-					ptr[v] = value
-					break
-				end
-				ptr = ptr[v]
+	if module == script then
+		if ts_path ~= nil then
+			local whatToLoad = ts_path .. "/" .. moduleName
+			local good = validateFilePath(whatToLoad .. ".lua")
+			print(good, whatToLoad .. ".lua")
+			if good then
+				return load(whatToLoad .. ".lua")()
+			else
+				return load(whatToLoad .. "/init.lua", whatToLoad)()
 			end
-			return constructed
 		end
+		local good = validateFilePath("out/" .. moduleName .. ".lua")
+		if good then
+			return load("out/" .. moduleName .. ".lua")()
+		else
+			return load("out/" .. moduleName .. "/init.lua")()
+		end
+	end
+	if typeof(module) == "table" then
+		-- its a TSModule
+		return module.loaded()
 	end
 end
 
@@ -153,3 +206,9 @@ function TS.generator(f)
 		end,
 	}
 end
+
+-- Execute program
+local _b = binder.new()
+_b:bindKey(owner, Enum.KeyCode.R).keyEvents.onKeyDown:Connect(function()
+	load("out/init.lua")()
+end)
