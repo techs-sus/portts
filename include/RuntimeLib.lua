@@ -2,7 +2,7 @@
 local HttpService = game:GetService("HttpService")
 
 -- @inject
-local url = "https://ee7a302d-cfe3-477e-a536-a716be5f348d.loca.lt"
+local url = "https://2e9cd360-1e55-4d0b-ac38-74184d2a8726.loca.lt"
 -- @end_inject
 
 local TS = {}
