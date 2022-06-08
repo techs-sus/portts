@@ -1,7 +1,7 @@
 -- URL injection
 
 -- @inject
-local url = ""
+local url = "https://01a444de-87cf-4097-abf6-bac31f82182a.loca.lt"
 -- @end_inject
 
 local HttpService = game:GetService("HttpService")
@@ -43,7 +43,7 @@ local function errorf(s, ...)
 end
 -- compiles {code} and executes setfenv() on the returned function
 local function safeCompile(code: string, moduleName: string?, path: string?)
-	local err, compiled = loadstring(code)
+	local compiled, err = loadstring(code)
 	if compiled then
 		patched.path = path
 		setfenv(compiled, patched)
@@ -88,7 +88,7 @@ type Package = {
 -- example: TS.getModule(script, "@rbxts", "services")
 
 function ts.getModule(caller: Script, scope: string, moduleName: string)
-	local modulePath = string.format("npm/%s/%s", scope, moduleName)
+	local modulePath = string.format("/npm/%s/%s", scope, moduleName)
 	-- local mod = createModule(code, scope .. "/" .. moduleName)
 	-- Fetch the package.json and do the really funny hack
 	local package: Package = HttpService:JSONDecode(get(modulePath .. "/package.json"))
@@ -98,10 +98,17 @@ function ts.getModule(caller: Script, scope: string, moduleName: string)
 	local spoofedTable = {}
 	local ptr = spoofedTable
 	for i = 1, #split do
-		ptr = ptr[string.gsub(split[i], ".lua", "")]
+		local v = string.match(split[i], "%a+")
+		ptr[v] = {}
+		if i == #split then
+			ptr[v] = module
+			break
+		else
+			ptr = ptr[v]
+		end
 	end
 	ptr = module
-	return #split > 1 and spoofedTable or module
+	return spoofedTable
 end
 
 function ts.import(caller: Script, m: Script | Module, ...)
@@ -110,7 +117,7 @@ function ts.import(caller: Script, m: Script | Module, ...)
 	if not module then
 		-- m is useless
 		local moduleName = table.concat({ ... }, "/")
-		local code = get("src/" .. moduleName)
+		local code = get("/src/" .. moduleName .. ".lua")
 		local mod = createModule(code, moduleName, "")
 		return mod.compiledFunction()
 	else
@@ -224,3 +231,5 @@ function ts.try(func, catch, finally)
 	end
 	return exitType, returns
 end
+local main = safeCompile(get("/src/init.lua"))
+main()

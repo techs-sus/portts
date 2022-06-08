@@ -1,1 +1,3 @@
-export default function didntask() {}
+export default function didntask() {
+	print("TOtal ts !11");
+}

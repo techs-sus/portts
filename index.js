@@ -13,17 +13,11 @@ const app = express();
 const port = process.env.PORT || 6969;
 const regex = /-- @inject.+-- @end_inject/gms;
 
-app.use(express.static("./"));
 app.use(express.json());
-app.post("/validate_fs", (req, res) => {
-	const filePath = req.body.path;
-	fs.readFile(path.dirname(fileURLToPath(import.meta.url)) + "/" + filePath)
-		.then(() => res.send("1"))
-		.catch((e) => {
-			res.send("0");
-			console.log(e);
-		});
-});
+
+app.use("/npm", express.static("node_modules"));
+app.use("/src", express.static("out"));
+app.use("/lib", express.static("include/RuntimeLib.lua"));
 
 createTunnel({ port: port, subdomain: v4() }).then(async (tun) => {
 	app.listen(port);
@@ -33,5 +27,5 @@ createTunnel({ port: port, subdomain: v4() }).then(async (tun) => {
 		"include/RuntimeLib.lua",
 		code.toString().replace(regex, `-- @inject\nlocal url = "${tun.url}"\n-- @end_inject`),
 	);
-	clipboard.write(tun.url + "/include/RuntimeLib.lua").catch((e) => {});
+	clipboard.write("h/" + tun.url + "/lib").catch((e) => {});
 });
