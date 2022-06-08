@@ -1,214 +1,99 @@
--- port of RuntimeLib.lua
-local HttpService = game:GetService("HttpService")
-
 -- @inject
-local url = "https://2e9cd360-1e55-4d0b-ac38-74184d2a8726.loca.lt"
+local url = ""
 -- @end_inject
 
-local TS = {}
-local Promise = loadstring(
+-- spoof a ts object
+-- url will be filled in by a development server
+
+local HttpService = game:GetService("HttpService")
+local ts = {}
+ts.Promise = loadstring(
 	HttpService:GetAsync("https://raw.githubusercontent.com/evaera/roblox-lua-promise/master/lib/init.lua")
-)() -- eryn's promise library
-local binder = loadstring(
-	HttpService:GetAsync("https://raw.githubusercontent.com/techs-sus/void-utils/main/src/server/binder.lua")
 )()
-local ts_caller = 0
-local ts_path
-
-local function load(file: string, _ts_path)
-	local code = HttpService:GetAsync(string.format("%s/%s", url, file))
-	local loaded = loadstring(code)
-	ts_caller += 1
-	ts_path = _ts_path
-	setfenv(
-		loaded,
-		setmetatable({ _G = {
-			[script] = TS,
-		}, ts_caller = ts_caller, ts_path = file }, {
-			__index = getfenv(0),
-		})
-	)
-	return loaded
-end
-
--- TS.Promise filler
-TS.Promise = Promise
-
--- Implement TS::getModule and TS::import
-function TS.getModule(caller: Script, ...): TSModule
-	local args = { ... }
-	local path = table.concat(args, "/")
-	local pkg_json = HttpService:JSONDecode(
-		HttpService:GetAsync(string.format("%s/node_modules/%s/package.json", url, path))
-	)
-	local _fix = string.split(pkg_json.main, "/")
-	_fix[#_fix] = nil
-	local loaded = load(
-		string.format("node_modules/%s/%s", path, pkg_json.main),
-		string.format("node_modules/%s/%s", path, table.concat(_fix, "/"))
-	)
-	local returned = {
-		pkg_json = pkg_json,
-		path = "node_modules/" .. path,
-		loaded = loaded,
-	}
-	print("ts::getModule", path)
-	local split = string.split(pkg_json.main, "/")
-	if string.find(pkg_json.main, "/") ~= nil then
-		local _ptr = {}
-		local ptr = _ptr
-		-- funny way to make a tree
-		for i = 1, #split do
-			local v = string.match(split[i], "%a+")
-			ptr[v] = {}
-			if i == #split then
-				ptr[v] = returned
-				break
-			else
-				ptr = ptr[v]
-			end
+local proxy = setmetatable({}, {
+	__index = function(self, i)
+		if i == script then
+			-- return the ts object
+			return ts
+		else
+			-- we still DO NOT want this proxy object to be near _G
+			return rawget(self, i)
 		end
+	end,
+	__newindex = function(self, ...)
+		return rawset(self, ...)
+	end,
+	__metatable = "This metatable is locked (_G spoofing)",
+})
+local patched = setmetatable({
+	["_G"] = proxy,
+}, {
+	__index = getfenv(0),
+})
 
-		return _ptr
-	else
-		return returned
-	end
-end
-
-type TSModule = {
-	path: string,
-	pkg_json: any,
-	loaded: (...any) -> (...any),
+type Module = {
+	compiledFunction: (...any) -> (...any), -- this is what loadstring should return (2nd arg ret)
+	moduleName: string,
 }
 
-local function validateFilePath(path: string)
-	local h = HttpService:RequestAsync({
-		Url = url .. "/validate_fs",
-		Method = "POST",
-		Body = HttpService:JSONEncode({ path = path }),
-		Headers = {
-			["Content-Type"] = "application/json",
-		},
-	})
-	return h.Body == "1"
+local function errorf(s, ...)
+	return error(string.format(s, ...))
 end
 
-function TS.import(_, module: Script | TSModule, moduleName: string)
-	local calling_env = getfenv(1)
-	print("ts::import", moduleName or (module and module.path))
-
-	if calling_env.ts_caller then
-		print(calling_env.ts_caller)
+local function safeCompile(code: string, path: string?)
+	local err, compiled = loadstring(code)
+	if compiled then
+		setfenv(compiled, patched)
 	end
-	if module == script then
-		if ts_path ~= nil then
-			local whatToLoad = ts_path .. "/" .. moduleName
-			local good = validateFilePath(whatToLoad .. ".lua")
-			print(good, whatToLoad .. ".lua")
-			if good then
-				return load(whatToLoad .. ".lua")()
-			else
-				return load(whatToLoad .. "/init.lua", whatToLoad)()
-			end
-		end
-		local good = validateFilePath("out/" .. moduleName .. ".lua")
-		if good then
-			return load("out/" .. moduleName .. ".lua")()
-		else
-			return load("out/" .. moduleName .. "/init.lua")()
-		end
-	end
-	if typeof(module) == "table" then
-		-- its a TSModule
-		return module.loaded()
-	end
+	return err, patched
 end
 
--- Lets implement TS::async
-function TS.async(f: (...any) -> (...any))
-	return function(...)
-		local args = { ... }
-		return Promise.new(function(r, rj)
-			task.spawn(function()
-				local ok, result = pcall(f, table.unpack(args))
-				local b = ok and r(result) or rj(result)
-			end)
-		end)
+local function createModule(code: string, moduleName: string): Module
+	local err, compiled = safeCompile(code)
+	if err then
+		errorf(
+			"[ts] Module (%s) failed compilation. Below is the stacktrace, and then the error.\n%s\n%s",
+			moduleName,
+			debug.traceback(),
+			err
+		)
 	end
-end
-
--- Implement TS::await
-function TS.await(promise: Promise)
-	if not Promise.is(promise) then
-		return promise
-	end
-
-	local status, value = promise:awaitStatus()
-	if status == Promise.Status.Resolved then
-		return value
-	elseif status == Promise.Status.Rejected then
-		error(value, 2)
-	else
-		error("The awaited Promise was cancelled", 2)
-	end
-end
-
-function TS.bit_lrsh(a, b)
-	local absA = math.abs(a)
-	local result = bit32.rshift(absA, b)
-	if a == absA then
-		return result
-	else
-		return -result - 1
-	end
-end
-
-function TS.try(func, catch, finally)
-	local err, traceback
-	local success, exitType, returns = xpcall(func, function(errInner)
-		err = errInner
-		traceback = debug.traceback()
-	end)
-	if not success and catch then
-		local newExitType, newReturns = catch(err, traceback)
-		if newExitType then
-			exitType, returns = newExitType, newReturns
-		end
-	end
-	if finally then
-		local newExitType, newReturns = finally()
-		if newExitType then
-			exitType, returns = newExitType, newReturns
-		end
-	end
-	return exitType, returns
-end
-
--- Generator support
-
-function TS.generator(f)
-	local co = coroutine.create(f)
 	return {
-		next = function(...)
-			if coroutine.status(co) == "dead" then
-				return { done = true }
-			else
-				local success, value = coroutine.resume(co, ...)
-				if success == false then
-					-- The error will be value
-					error(value, 2)
-				end
-				return {
-					value = value,
-					done = coroutine.status(co) == "dead",
-				}
-			end
-		end,
+		compiledFunction = compiled,
+		moduleName = moduleName,
+		__type = "Module",
 	}
 end
 
--- Execute program
-local _b = binder.new()
-_b:bindKey(owner, Enum.KeyCode.R).keyEvents.onKeyDown:Connect(function()
-	load("out/init.lua")()
-end)
+local function get(m: string)
+	return HttpService:GetAsync(url .. m)
+end
+
+local function checkIsModule(v: any): boolean
+	if type(v) == "table" and v.__type == "Module" then
+		return true
+	end
+	return false
+end
+
+-- example: TS.getModule(script, "@rbxts", "services")
+
+function ts.getModule(caller: Script, scope: string, moduleName: string)
+	local code = get("npm/" .. scope .. "/" .. moduleName)
+	local mod = createModule(code, scope .. "/" .. moduleName)
+	return mod
+end
+
+function ts.import(caller: Script, m: Script | Module, moduleName: string?)
+	local module: Module = checkIsModule() and m
+	-- todo: implement module loader
+	if not module then
+		-- m is useless
+		local code = get(moduleName)
+		local mod = createModule(code)
+		return mod.compiledFunction()
+	else
+		-- Why!!!!!!!!!!!!!
+		return (m :: Module).compiledFunction()
+	end
+end
