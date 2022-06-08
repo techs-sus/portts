@@ -2,14 +2,16 @@
 	"typescript.tsdk": "node_modules/typescript/lib",
 	"files.eol": "\n",
 	"[typescript]": {
-		"editor.defaultFormatter": "dbaeumer.vscode-eslint",
+		"editor.defaultFormatter": "esbenp.prettier-vscode",
 		"editor.formatOnSave": true
 	},
 	"[typescriptreact]": {
-		"editor.defaultFormatter": "dbaeumer.vscode-eslint",
+		"editor.defaultFormatter": "esbenp.prettier-vscode",
 		"editor.formatOnSave": true
 	},
 	"eslint.run": "onType",
 	"eslint.format.enable": true,
-	"robloxLsp.diagnostics.globals": ["owner"]
+	"robloxLsp.diagnostics.globals": [
+		"owner"
+	]
 }
